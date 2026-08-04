@@ -5,6 +5,30 @@
 > **License: Non-Commercial Research only.** Free for research and study.
 > Commercial use requires prior written permission — see [LICENSE](LICENSE).
 
+> **Scope & status (read first).** SDIR is a compact, first-generation
+> **prototype**: a read-only proof-of-concept for formative-layer auditing.
+> It measures how far a batch has **drifted from a human baseline you supply**,
+> in ways consistent with recursive synthesis. It is **not** a production
+> system, is **not** meant to run at full training scale, and its score
+> **must not** be used as a standalone gate on a training decision. It is an
+> instrument for investigation, not authorization — a diagnosis is evidence, a
+> separate policy layer decides. SDIR reports **drift from your baseline, not a
+> good/bad verdict**: a batch can drift because it is recursively synthesised
+> *or* because it is legitimately narrow human text. The baseline **must match
+> the batch's domain and language**, or the drift it reports will be real but
+> not a defect.
+
+> **v1.1 (hardening).** After public adversarial review, v1.0's multiplicative
+> fusion was found to allow a **false CLEAR**: relabelling provenance to look
+> diverse, or contaminating the baseline, could zero the score while strong
+> recursion evidence remained. v1.1 fixes this — text-intrinsic drift can no
+> longer be vetoed by a single signal; provenance is treated conservatively
+> (missing/unknown raises risk, never lowers it); recursion and diversity are
+> measured *relative to the baseline* so legitimately homogeneous human text no
+> longer self-flags; and CLEAR is narrowed to "no material drift under the
+> declared baseline, provenance, code and configuration." With thanks to the
+> reviewers who broke it.
+
 Part of **HAS-Core**, the open, minimal tier of a formative-layer auditing
 framework. Where run-time evaluation (red-teaming, sandboxes, capability tests)
 measures *what a model already does*, formative-layer auditing measures the
@@ -41,9 +65,10 @@ pip install numpy scipy scikit-learn matplotlib
 python demo.py
 ```
 
-`demo.py` builds two contrasting corpora (no downloads), runs the read-out on
-both, and writes `sdir_demo.png`. A healthy multi-source batch scores near zero;
-a recursively-synthesised, source-collapsed batch trips the SEVERE trigger.
+`demo.py` builds three corpora (no downloads) and writes `sdir_demo.png`: a
+healthy multi-source batch (reads CLEAR), a recursively-synthesised batch (high
+drift), and the *same* recursive batch with its provenance relabelled to look
+diverse — which v1.1 still flags, where v1.0 could be fooled into CLEAR.
 
 ### Run it on your own data
 
@@ -65,19 +90,20 @@ A single score in `[0, 1]` plus the component signals that produced it:
 
 | signal | what it catches |
 |---|---|
-| distribution shift | batch drifting away from the human baseline |
-| lineage concentration | sources collapsing toward one origin |
-| recursion fingerprint | template repetition + loss of rare vocabulary |
-| diversity contraction | the corpus collapsing toward a single mode |
+| distribution shift | batch drifting away from the baseline |
+| lineage concentration | sources collapsing toward one origin (counts as risk only when provenance is untrusted) |
+| recursion drift | template repetition + loss of rare vocabulary, *relative to baseline* |
+| diversity drift | corpus collapsing toward a single mode, *relative to baseline* |
+| provenance uncertainty | share of the batch that is unverified/unknown (raises risk) |
 
 Prototype triggers (first-generation, calibratable):
 
 | SDIR | status | action |
 |---|---|---|
-| `< 0.08` | CLEAR | allow into training |
-| `0.08 – 0.15` | MONITOR | increase source sampling |
-| `0.15 – 0.30` | TRIGGER | quarantine high-risk subset |
-| `> 0.30` | SEVERE | block batch; audit human data |
+| `< 0.15` | CLEAR | no material drift under the declared baseline/provenance/config (not an authorization to train) |
+| `0.15 – 0.35` | MONITOR | some drift; log lineage and review |
+| `0.35 – 0.60` | REVIEW | marked drift; decide if it is domain narrowness or recursive synthesis |
+| `> 0.60` | SEVERE-DRIFT | large departure consistent with recursive synthesis; investigate before use |
 
 ---
 

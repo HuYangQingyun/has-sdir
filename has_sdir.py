@@ -7,32 +7,59 @@ Institute: Harmondeg Institute for Philosophy & Practice, Calgary, Canada
 DOI     : 10.5281/zenodo.21778972
 Contact : contact@harmondeg.org
 License : Non-Commercial Research License — see LICENSE
+Version : 1.1
 
 ------------------------------------------------------------------------
-WHAT THIS MODULE IS
+SCOPE AND STATUS  (read this first)
 ------------------------------------------------------------------------
-This is the *read-out* layer of the SDIR protocol. Given a batch of text
-records (each tagged with an origin label) and a verified human-origin
-baseline, it reports a single normalised score in [0, 1] together with the
-component signals that produced it:
+SDIR is a compact, first-generation PROTOTYPE: a read-only proof-of-concept
+for formative-layer auditing. It measures how far a batch has structurally
+DRIFTED FROM A HUMAN BASELINE you supply, and how much its internal structure
+shows the signatures of recursive synthesis. It is NOT a production system,
+NOT intended to run at full training scale, and its score MUST NOT be used as
+a standalone gate on a training decision. It is an instrument for
+investigation, not authorization. A diagnosis is evidence; a separate policy
+layer, not this score, decides whether an operation is permitted.
 
-    - distribution shift of the batch away from the human baseline
+IMPORTANT — SDIR reports DRIFT FROM YOUR BASELINE, not a verdict of
+"good vs bad" data. A batch can drift because it is recursively synthesised,
+OR because it is legitimately narrow human text (one domain, one language,
+one register). SDIR cannot, by itself, tell these apart. That judgement
+belongs to whoever knows the data. To make the read-out meaningful, the
+baseline MUST be matched to the batch's intended domain and language; a
+mismatched baseline will report drift that is real but not a defect.
+
+------------------------------------------------------------------------
+WHAT THIS MODULE COMPUTES
+------------------------------------------------------------------------
+Given a batch (each record tagged with an origin label) and a human baseline,
+it reports a score in [0,1] with the component signals that produced it:
+
+    - distribution shift of the batch away from the baseline
     - source-lineage concentration (normalised Herfindahl index)
-    - recursive-synthesis fingerprint (template / low-frequency collapse)
-    - semantic diversity contraction
+    - recursion fingerprint, measured RELATIVE TO the baseline
+    - diversity contraction, measured RELATIVE TO the baseline
 
-A HIGH SDIR means the batch shows source contraction, recursive synthesis
-and diversity loss — i.e. the data is beginning to feed on itself.
+A HIGH score means the batch's structure departs markedly from the baseline
+in ways consistent with recursive synthesis. Whether that departure is a
+problem is a judgement for the data owner, informed by domain and baseline.
 
 ------------------------------------------------------------------------
-WHAT THIS MODULE IS NOT
+v1.1 — HARDENING (in response to public adversarial review + self-audit)
 ------------------------------------------------------------------------
-The *why* — why these particular signals, how the fusion is weighted at the
-structural level, and how the trigger thresholds are derived from the
-underlying Harmondeg stability judgement — is NOT contained here. This file
-computes observable statistics anyone can verify. It does not contain, and
-cannot be reverse-engineered into, the judgement-generating layer. The core
-never ships.
+1. Fusion no longer lets one low signal cancel independent strong evidence
+   (the v1.0 product form allowed a false CLEAR by relabelling provenance or
+   contaminating the baseline).
+2. Recursion and diversity are measured RELATIVE TO the baseline, so
+   legitimately homogeneous human text no longer reads as recursive collapse
+   purely because its internal similarity is high in absolute terms.
+3. Provenance is treated conservatively: missing/undocumented origins become
+   unknown_origin and RAISE uncertainty; they never become favourable.
+4. Verdict language is drift-based ("departs from baseline"), not a
+   good/bad ruling; CLEAR is narrowed accordingly.
+
+The judgement-generating layer (why these signals, structural weighting,
+threshold derivation) is NOT in this file and does not ship.
 ------------------------------------------------------------------------
 """
 
@@ -44,23 +71,19 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+# ---- thresholds (drift from baseline; first-generation, calibratable) ----
+SDIR_MONITOR = 0.15
+SDIR_TRIGGER = 0.35
+SDIR_SEVERE  = 0.60
 
-# ----------------------------------------------------------------------
-# Prototype thresholds (first-generation, calibratable)
-# ----------------------------------------------------------------------
-SDIR_MONITOR = 0.08   # below: clean; above: begin monitoring
-SDIR_TRIGGER = 0.15   # above: significant recursive-synthesis risk
-SDIR_SEVERE  = 0.30   # above: severe source contraction
-
-
-# ----------------------------------------------------------------------
-# Origin labels
-# ----------------------------------------------------------------------
 VERIFIED_HUMAN   = "verified_human"
 DIRECT_SYNTHETIC = "direct_synthetic"
 UNKNOWN_ORIGIN   = "unknown_origin"
 MIXED_ORIGIN     = "mixed_origin"
 RECURSIVE_SYNTH  = "recursive_synthetic"
+_KNOWN_ORIGINS = {VERIFIED_HUMAN, DIRECT_SYNTHETIC, UNKNOWN_ORIGIN,
+                  MIXED_ORIGIN, RECURSIVE_SYNTH}
+_TRUSTED = {VERIFIED_HUMAN}
 
 
 @dataclass
@@ -68,49 +91,74 @@ class SDIRResult:
     sdir: float
     dist_shift: float
     lineage_concentration: float
-    recursion_fingerprint: float
-    diversity_contraction: float
+    recursion_drift: float
+    diversity_drift: float
+    provenance_uncertainty: float
     origin_distribution: dict = field(default_factory=dict)
     trigger_status: str = ""
     recommended_action: str = ""
+    notes: list = field(default_factory=list)
 
     def as_report(self) -> str:
         lines = [
-            "HAS-Core :: SDIR Formative-Layer Read-out",
-            "-" * 44,
+            "HAS-Core :: SDIR Formative-Layer Read-out  (v1.1 prototype)",
+            "reports DRIFT FROM BASELINE, not a good/bad verdict",
+            "-" * 52,
             f"SDIR score ............... {self.sdir:.3f}",
             f"  distribution shift ..... {self.dist_shift:.3f}",
             f"  lineage concentration .. {self.lineage_concentration:.3f}",
-            f"  recursion fingerprint .. {self.recursion_fingerprint:.3f}",
-            f"  diversity contraction .. {self.diversity_contraction:.3f}",
-            "-" * 44,
-            f"Trigger status ........... {self.trigger_status}",
+            f"  recursion drift ........ {self.recursion_drift:.3f}",
+            f"  diversity drift ........ {self.diversity_drift:.3f}",
+            f"  provenance uncertainty . {self.provenance_uncertainty:.3f}",
+            "-" * 52,
+            f"Status ................... {self.trigger_status}",
             f"Recommended action ....... {self.recommended_action}",
-            "-" * 44,
+            "-" * 52,
             "Origin distribution:",
         ]
         for k, v in self.origin_distribution.items():
             lines.append(f"  {k:<20} {v:>6.1%}")
+        if self.notes:
+            lines.append("-" * 52)
+            lines.append("Notes:")
+            for n in self.notes:
+                lines.append(f"  - {n}")
         return "\n".join(lines)
 
 
-# ----------------------------------------------------------------------
-# Component signals (all observable, all verifiable)
-# ----------------------------------------------------------------------
-def _distribution_shift(batch_vecs: np.ndarray, base_vecs: np.ndarray) -> float:
-    """Normalised divergence between batch and human baseline in TF-IDF space.
-    Uses mean-embedding cosine distance as a stable, dependency-light proxy."""
-    b = batch_vecs.mean(axis=0)
-    q = base_vecs.mean(axis=0)
+def _normalise_origins(origins):
+    clean, notes = [], []
+    n_missing = n_invalid = 0
+    for o in origins:
+        if o is None or (isinstance(o, str) and o.strip() == ""):
+            clean.append(UNKNOWN_ORIGIN); n_missing += 1
+        elif o not in _KNOWN_ORIGINS:
+            clean.append(UNKNOWN_ORIGIN); n_invalid += 1
+        else:
+            clean.append(o)
+    if n_missing:
+        notes.append(f"{n_missing} record(s) had no origin; treated as unknown_origin.")
+    if n_invalid:
+        notes.append(f"{n_invalid} record(s) had an undocumented origin label; "
+                     f"treated as unknown_origin.")
+    return clean, notes
+
+
+def _provenance_uncertainty(origins):
+    if not origins:
+        return 1.0
+    untrusted = sum(1 for o in origins if o not in _TRUSTED)
+    return float(untrusted / len(origins))
+
+
+def _distribution_shift(batch_vecs, base_vecs):
+    b = batch_vecs.mean(axis=0); q = base_vecs.mean(axis=0)
     cos = float(cosine_similarity(b.reshape(1, -1), q.reshape(1, -1))[0, 0])
     return float(np.clip(1.0 - cos, 0.0, 1.0))
 
 
-def _lineage_concentration(origins: list[str]) -> float:
-    """Normalised Herfindahl index over origin labels.
-    0 = perfectly diverse sources, 1 = single source."""
-    counts = Counter(origins)
-    m = len(counts)
+def _lineage_concentration(origins):
+    counts = Counter(origins); m = len(counts)
     if m <= 1:
         return 1.0
     total = sum(counts.values())
@@ -119,92 +167,102 @@ def _lineage_concentration(origins: list[str]) -> float:
     return float((hhi - 1.0 / m) / (1.0 - 1.0 / m))
 
 
-def _recursion_fingerprint(texts: list[str]) -> float:
-    """Detects template repetition and low-frequency-expression collapse —
-    signatures of text that has passed repeatedly through generative models."""
+def _recursion_raw(texts):
+    """Absolute recursion signature: opener repetition + hapax collapse."""
     if len(texts) < 2:
         return 0.0
-
-    # (a) opening-template repetition: how often documents share their first
-    #     few tokens — recursive synthetic text tends to converge on openers.
-    openers = []
-    for t in texts:
-        toks = re.findall(r"\w+", t.lower())
-        openers.append(" ".join(toks[:4]))
-    opener_counts = Counter(openers)
-    top_share = max(opener_counts.values()) / len(texts)
-
-    # (b) low-frequency vocabulary collapse: healthy human corpora have a long
-    #     tail of rare words; recursively synthesised corpora lose it.
+    openers = [" ".join(re.findall(r"\w+", t.lower())[:4]) for t in texts]
+    top_share = max(Counter(openers).values()) / len(texts)
     all_tokens = []
     for t in texts:
         all_tokens.extend(re.findall(r"\w+", t.lower()))
     if not all_tokens:
         return 0.0
     vocab = Counter(all_tokens)
-    hapax = sum(1 for w, c in vocab.items() if c == 1)
-    hapax_ratio = hapax / len(vocab)                  # high in healthy text
+    hapax_ratio = sum(1 for w, c in vocab.items() if c == 1) / len(vocab)
     tail_collapse = float(np.clip(1.0 - hapax_ratio / 0.5, 0.0, 1.0))
-
     return float(np.clip(0.5 * top_share + 0.5 * tail_collapse, 0.0, 1.0))
 
 
-def _diversity_contraction(batch_vecs: np.ndarray) -> float:
-    """Semantic-network contraction: mean pairwise similarity inside the batch.
-    High internal similarity = the corpus is collapsing toward a single mode."""
-    if batch_vecs.shape[0] < 2:
+def _diversity_raw(vecs):
+    if vecs.shape[0] < 2:
         return 0.0
-    n = min(batch_vecs.shape[0], 400)                 # cap for cost
-    idx = np.random.default_rng(0).choice(batch_vecs.shape[0], n, replace=False)
-    sims = cosine_similarity(batch_vecs[idx])
-    iu = np.triu_indices(n, k=1)
-    mean_sim = float(np.mean(sims[iu]))
-    return float(np.clip(mean_sim, 0.0, 1.0))
+    n = min(vecs.shape[0], 400)
+    idx = np.random.default_rng(0).choice(vecs.shape[0], n, replace=False)
+    sims = cosine_similarity(vecs[idx])
+    return float(np.clip(float(np.mean(sims[np.triu_indices(n, k=1)])), 0.0, 1.0))
 
 
-# ----------------------------------------------------------------------
-# Fusion  (public form: transparent product-of-signals proxy)
-# ----------------------------------------------------------------------
-def _fuse(dist_shift, lineage, recursion, diversity, gamma: float = 2.2) -> float:
-    """Public composite proxy. The signals are combined multiplicatively so
-    that risk registers only when several independent indicators co-occur —
-    a single elevated signal alone will not trip the score.
-
-    NOTE: this transparent proxy is what ships. The structural weighting that
-    ties these signals to the underlying stability judgement is not here."""
-    eps = 1e-6
-    raw = (dist_shift * lineage * recursion * (0.5 + diversity)) / (1.0 + eps)
-    return float(1.0 - np.exp(-gamma * raw))
+def _drift(batch_val, base_val):
+    """How much a signal has moved ABOVE the baseline, normalised.
+    Only upward movement (more recursive / more contracted) counts."""
+    excess = max(0.0, batch_val - base_val)
+    headroom = max(1e-6, 1.0 - base_val)
+    return float(np.clip(excess / headroom, 0.0, 1.0))
 
 
-def _status(sdir: float) -> tuple[str, str]:
+def _soft_floor(x, floor):
+    """Subtract a tolerance floor and renormalise. Values at or below the
+    floor (normal sampling noise between same-distribution corpora) map to 0;
+    only movement clearly above the floor counts as signal."""
+    return float(np.clip((x - floor) / max(1e-6, 1.0 - floor), 0.0, 1.0))
+
+
+def _fuse(dist_shift, lineage, recursion_drift, diversity_drift, prov_uncert,
+          dist_floor=0.0):
+    """v1.1 fusion. Text-intrinsic DRIFT (recursion, diversity relative to
+    baseline) forms the evidence floor and cannot be vetoed by a single low
+    signal. Distribution shift and lineage corroborate but cannot cancel it.
+    Provenance uncertainty only adds risk.
+
+    dist_floor is the baseline's own within-distribution sampling noise;
+    distribution shift at or below it is not treated as drift, so a batch
+    drawn from the same distribution as the baseline does not self-flag."""
+    ds = _soft_floor(dist_shift, dist_floor)
+    text_evidence = max(recursion_drift, diversity_drift) * 0.6 + \
+                    (recursion_drift * diversity_drift) ** 0.5 * 0.4
+    # Source concentration is only a RISK when provenance is untrusted.
+    # A batch that is entirely verified_human is concentrated but not suspect,
+    # so lineage contributes to risk in proportion to provenance uncertainty.
+    lineage_risk = lineage * prov_uncert
+    corrob = 1.0 - (1.0 - ds) * (1.0 - lineage_risk)        # noisy-OR
+    lifted = text_evidence + (1.0 - text_evidence) * corrob * 0.35
+    with_prov = lifted + (1.0 - lifted) * prov_uncert * 0.15
+    return float(np.clip(with_prov, 0.0, 1.0))
+
+
+def _status(sdir):
     if sdir < SDIR_MONITOR:
-        return "CLEAR", "Allow batch into training."
+        return ("CLEAR",
+                "Batch does not depart materially from the declared baseline "
+                "under this provenance, code and configuration. Not an "
+                "authorization to train.")
     if sdir < SDIR_TRIGGER:
-        return "MONITOR", "Increase source sampling; log lineage."
+        return ("MONITOR",
+                "Some drift from baseline; log lineage and review whether it "
+                "reflects domain or degradation.")
     if sdir < SDIR_SEVERE:
-        return "TRIGGER", "Quarantine high-risk subset; add verified human data."
-    return "SEVERE", "Block batch from training; full human data audit."
+        return ("REVIEW",
+                "Marked drift from baseline. Determine whether it is "
+                "legitimate domain narrowness or recursive synthesis before "
+                "using the batch.")
+    return ("SEVERE-DRIFT",
+            "Large structural departure from baseline consistent with "
+            "recursive synthesis. Investigate before use; do not treat as "
+            "training-ready on this signal alone.")
 
 
-# ----------------------------------------------------------------------
-# Public entry point
-# ----------------------------------------------------------------------
-def compute_sdir(
-    batch_texts: list[str],
-    batch_origins: list[str],
-    baseline_texts: list[str],
-) -> SDIRResult:
-    """Run one SDIR read-out.
-
-    batch_texts    : documents in the batch under audit
-    batch_origins  : origin label per document (see label constants)
-    baseline_texts : verified human-origin reference corpus
+def compute_sdir(batch_texts, batch_origins, baseline_texts):
+    """Run one SDIR read-out (v1.1 prototype).
+    Reports drift of the batch from baseline. Baseline should match the
+    batch's intended domain/language, or drift will be real but not a defect.
     """
     if len(batch_texts) != len(batch_origins):
         raise ValueError("batch_texts and batch_origins must align 1:1")
     if len(batch_texts) < 2 or len(baseline_texts) < 2:
         raise ValueError("need at least 2 documents in batch and baseline")
+
+    origins, notes = _normalise_origins(batch_origins)
 
     vec = TfidfVectorizer(max_features=4096, stop_words="english")
     vec.fit(baseline_texts + batch_texts)
@@ -212,23 +270,44 @@ def compute_sdir(
     base_vecs  = vec.transform(baseline_texts).toarray()
 
     dist_shift = _distribution_shift(batch_vecs, base_vecs)
-    lineage    = _lineage_concentration(batch_origins)
-    recursion  = _recursion_fingerprint(batch_texts)
-    diversity  = _diversity_contraction(batch_vecs)
+    lineage    = _lineage_concentration(origins)
+    prov_uncert = _provenance_uncertainty(origins)
 
-    sdir = _fuse(dist_shift, lineage, recursion, diversity)
+    # baseline self-noise: split the baseline in half and measure the shift
+    # between the halves. Two same-distribution corpora still differ a little;
+    # that amount is not drift, so it becomes the tolerance floor.
+    if base_vecs.shape[0] >= 4:
+        half = base_vecs.shape[0] // 2
+        perm = np.random.default_rng(0).permutation(base_vecs.shape[0])
+        b1 = base_vecs[perm[:half]]; b2 = base_vecs[perm[half:2*half]]
+        dist_floor = _distribution_shift(b1, b2)
+    else:
+        dist_floor = 0.0
+
+    # recursion & diversity measured RELATIVE TO baseline
+    rec_batch = _recursion_raw(batch_texts)
+    rec_base  = _recursion_raw(baseline_texts)
+    div_batch = _diversity_raw(batch_vecs)
+    div_base  = _diversity_raw(base_vecs)
+    recursion_drift = _drift(rec_batch, rec_base)
+    diversity_drift = _drift(div_batch, div_base)
+
+    sdir = _fuse(dist_shift, lineage, recursion_drift, diversity_drift,
+                 prov_uncert, dist_floor=dist_floor)
     status, action = _status(sdir)
 
-    total = len(batch_origins)
-    dist = {k: v / total for k, v in Counter(batch_origins).items()}
+    if prov_uncert >= 0.5:
+        notes.append(f"{prov_uncert:.0%} of the batch is unverified/unknown "
+                     f"provenance; provenance evidence is weak (raises uncertainty).")
+    notes.append("SDIR reports drift from the supplied baseline, not a good/bad "
+                 "verdict. Ensure the baseline matches the batch's domain.")
+
+    total = len(origins)
+    dist = {k: v / total for k, v in Counter(origins).items()}
 
     return SDIRResult(
-        sdir=sdir,
-        dist_shift=dist_shift,
-        lineage_concentration=lineage,
-        recursion_fingerprint=recursion,
-        diversity_contraction=diversity,
-        origin_distribution=dist,
-        trigger_status=status,
-        recommended_action=action,
+        sdir=sdir, dist_shift=dist_shift, lineage_concentration=lineage,
+        recursion_drift=recursion_drift, diversity_drift=diversity_drift,
+        provenance_uncertainty=prov_uncert, origin_distribution=dist,
+        trigger_status=status, recommended_action=action, notes=notes,
     )

@@ -1,140 +1,86 @@
 """
-HAS-Core :: SDIR — self-contained demonstration
+HAS-Core :: SDIR v1.1 — self-contained demonstration
 Run:  python demo.py
 
-Builds two contrasting corpora with NO external downloads:
-  (A) a healthy, multi-source human-style batch
-  (B) a batch undergoing synthetic inbreeding (recursive, source-collapsed)
+Builds three corpora with NO external downloads:
+  (A) a healthy, multi-source human-style batch      -> should read CLEAR
+  (B) a recursively synthesised, inbred batch         -> should flag high drift
+  (C) the SAME recursive batch with its provenance relabelled to look diverse
+      -> v1.1 still flags it (v1.0 could be fooled into CLEAR here)
 
-then runs the SDIR read-out on both against a human baseline and shows that
-SDIR separates them — the degradation is caught before any model sees it.
+all scored against a human baseline. SDIR reports DRIFT FROM THE BASELINE,
+not a good/bad verdict; the baseline should match the batch's domain.
 """
-
 import random
 import numpy as np
 import matplotlib.pyplot as plt
-
-from has_sdir import (
-    compute_sdir,
-    VERIFIED_HUMAN, DIRECT_SYNTHETIC, UNKNOWN_ORIGIN,
-    MIXED_ORIGIN, RECURSIVE_SYNTH,
-    SDIR_TRIGGER,
-)
+from has_sdir import (compute_sdir, VERIFIED_HUMAN, DIRECT_SYNTHETIC,
+    UNKNOWN_ORIGIN, MIXED_ORIGIN, RECURSIVE_SYNTH, SDIR_TRIGGER)
 
 rng = random.Random(7)
 
-# ----------------------------------------------------------------------
-# Vocabulary pools — the healthy pool has a long tail; the collapsed pool
-# reuses a narrow set of tokens and templates (the inbreeding signature).
-# ----------------------------------------------------------------------
-HUMAN_SUBJECTS = [
-    "the river delta", "a copper kettle", "migrating cranes", "the night market",
-    "an old fisherman", "the granite ridge", "a violin maker", "monsoon clouds",
-    "the harbor lights", "a wheat field", "the clockmaker", "tidal pools",
-    "a mountain pass", "the printing press", "desert nomads", "a coral reef",
-]
-HUMAN_VERBS = [
-    "weathered", "unfolded across", "resisted", "gathered near", "gave way to",
-    "outlasted", "drifted toward", "sharpened against", "receded from", "held",
-]
-HUMAN_TAILS = [
-    "in the long dusk of late autumn.", "before anyone thought to record it.",
-    "against every prediction the elders made.", "with a patience no clock keeps.",
-    "as the trade winds shifted once more.", "leaving only salt and rumor behind.",
-    "the way forgotten crafts sometimes do.", "under a sky the color of slate.",
-]
+SUBJ = ["the river delta","a copper kettle","migrating cranes","the night market",
+        "an old fisherman","the granite ridge","a violin maker","monsoon clouds",
+        "the harbor lights","a wheat field","the clockmaker","tidal pools",
+        "a mountain pass","the printing press","desert nomads","a coral reef"]
+VERB = ["weathered","unfolded across","resisted","gathered near","gave way to",
+        "outlasted","drifted toward","sharpened against","receded from","held"]
+TAIL = ["in the long dusk of late autumn.","before anyone thought to record it.",
+        "against every prediction the elders made.","with a patience no clock keeps.",
+        "as the trade winds shifted once more.","leaving only salt and rumor behind."]
+def human():
+    return " ".join(f"{rng.choice(SUBJ)} {rng.choice(VERB)} {rng.choice(SUBJ)} "
+                    f"{rng.choice(TAIL)}" for _ in range(rng.randint(2,4)))
 
-SYNTH_OPENERS = [
-    "It is important to note that", "In today's fast-paced world",
-    "As we can clearly see", "It is worth mentioning that",
-]
-SYNTH_MIDDLE = [
-    "the system provides significant value", "this solution enhances efficiency",
-    "the approach delivers optimal results", "the framework ensures scalability",
-]
-SYNTH_TAILS = [
-    "in a seamless and robust manner.", "to drive impactful outcomes.",
-    "for a wide range of stakeholders.", "moving forward into the future.",
-]
+OPEN = ["It is important to note that","In today's fast-paced world",
+        "As we can clearly see","It is worth mentioning that"]
+MIDL = ["the system provides significant value","this solution enhances efficiency",
+        "the approach delivers optimal results","the framework ensures scalability"]
+TL   = ["in a seamless and robust manner.","to drive impactful outcomes.",
+        "for a wide range of stakeholders.","moving forward into the future."]
+def synth():
+    return " ".join(f"{rng.choice(OPEN[:2])} {rng.choice(MIDL)} {rng.choice(TL)}"
+                    for _ in range(rng.randint(2,3)))
 
+baseline = [human() for _ in range(300)]
 
-def make_human_doc() -> str:
-    parts = []
-    for _ in range(rng.randint(2, 4)):
-        parts.append(
-            f"{rng.choice(HUMAN_SUBJECTS)} {rng.choice(HUMAN_VERBS)} "
-            f"{rng.choice(HUMAN_SUBJECTS)} {rng.choice(HUMAN_TAILS)}"
-        )
-    return " ".join(parts)
+# A: healthy
+a_txt = [human() for _ in range(300)]
+a_org = [VERIFIED_HUMAN]*300
 
+# B: recursive, honestly labelled
+b_txt = [synth() for _ in range(300)]
+b_org = [RECURSIVE_SYNTH]*300
 
-def make_synth_doc(depth: int) -> str:
-    """Higher depth = more recursive collapse: fewer openers, more repetition."""
-    opener_pool = SYNTH_OPENERS[: max(1, 4 - depth)]
-    parts = []
-    for _ in range(rng.randint(2, 3)):
-        parts.append(
-            f"{rng.choice(opener_pool)} {rng.choice(SYNTH_MIDDLE)} "
-            f"{rng.choice(SYNTH_TAILS)}"
-        )
-    return " ".join(parts)
+# C: SAME recursive text, provenance relabelled to look diverse (EV's attack)
+five = [VERIFIED_HUMAN,DIRECT_SYNTHETIC,UNKNOWN_ORIGIN,MIXED_ORIGIN,RECURSIVE_SYNTH]
+c_txt = b_txt
+c_org = [five[i%5] for i in range(300)]
 
+ra = compute_sdir(a_txt, a_org, baseline)
+rb = compute_sdir(b_txt, b_org, baseline)
+rc = compute_sdir(c_txt, c_org, baseline)
 
-# ----------------------------------------------------------------------
-# Corpora
-# ----------------------------------------------------------------------
-baseline = [make_human_doc() for _ in range(300)]
+print("\n=== A: healthy, multi-source ==="); print(ra.as_report())
+print("\n=== B: recursive, honestly labelled ==="); print(rb.as_report())
+print("\n=== C: SAME recursive text, provenance relabelled 'diverse' ===")
+print(rc.as_report())
+print("\nNote: A reads CLEAR; B flags high drift; C still flags in v1.1 even")
+print("though its labels were changed to look diverse (v1.0 could be fooled).")
 
-# Batch A: healthy, multi-source
-batch_a_texts   = [make_human_doc() for _ in range(300)]
-batch_a_origins = [rng.choice(
-    [VERIFIED_HUMAN, VERIFIED_HUMAN, VERIFIED_HUMAN, MIXED_ORIGIN, UNKNOWN_ORIGIN]
-) for _ in range(300)]
-
-# Batch B: synthetic inbreeding — source-collapsed, deeply recursive
-batch_b_texts   = [make_synth_doc(depth=3) for _ in range(300)]
-batch_b_origins = [rng.choice(
-    [RECURSIVE_SYNTH, RECURSIVE_SYNTH, RECURSIVE_SYNTH, DIRECT_SYNTHETIC]
-) for _ in range(300)]
-
-res_a = compute_sdir(batch_a_texts, batch_a_origins, baseline)
-res_b = compute_sdir(batch_b_texts, batch_b_origins, baseline)
-
-print("\n=== BATCH A (healthy, multi-source) ===")
-print(res_a.as_report())
-print("\n=== BATCH B (synthetic inbreeding) ===")
-print(res_b.as_report())
-
-# ----------------------------------------------------------------------
-# Figure
-# ----------------------------------------------------------------------
-labels = ["dist.\nshift", "lineage\nconc.", "recursion\nfinger.",
-          "diversity\ncontr.", "SDIR"]
-vals_a = [res_a.dist_shift, res_a.lineage_concentration,
-          res_a.recursion_fingerprint, res_a.diversity_contraction, res_a.sdir]
-vals_b = [res_b.dist_shift, res_b.lineage_concentration,
-          res_b.recursion_fingerprint, res_b.diversity_contraction, res_b.sdir]
-
-x = np.arange(len(labels))
-w = 0.38
-fig, ax = plt.subplots(figsize=(9, 5.2))
-ax.bar(x - w/2, vals_a, w, label="Batch A — healthy", color="#3a7d5d")
-ax.bar(x + w/2, vals_b, w, label="Batch B — inbreeding", color="#b5493a")
-ax.axhline(SDIR_TRIGGER, ls="--", lw=1, color="#444",
-           label=f"SDIR trigger = {SDIR_TRIGGER}")
-ax.set_ylim(0, 1.18)
-ax.set_yticks(np.linspace(0, 1.0, 6))
-ax.set_ylabel("normalised signal  [0, 1]")
-ax.set_title("HAS-Core :: SDIR — formative-layer read-out\n"
-             "degradation caught before the model trains on it",
-             fontsize=12, pad=14)
-ax.set_xticks(x)
-ax.set_xticklabels(labels)
-ax.legend(frameon=False, fontsize=9)
-for i, v in enumerate(vals_a):
-    ax.text(i - w/2, v + 0.02, f"{v:.2f}", ha="center", fontsize=8)
-for i, v in enumerate(vals_b):
-    ax.text(i + w/2, v + 0.02, f"{v:.2f}", ha="center", fontsize=8)
-fig.tight_layout()
-fig.savefig("sdir_demo.png", dpi=150)
+labels = ["dist\nshift","lineage\nconc.","recursion\ndrift","diversity\ndrift","SDIR"]
+def row(r): return [r.dist_shift, r.lineage_concentration, r.recursion_drift,
+                    r.diversity_drift, r.sdir]
+va, vb, vc = row(ra), row(rb), row(rc)
+x = np.arange(len(labels)); w = 0.26
+fig, ax = plt.subplots(figsize=(9.5, 5.4))
+ax.bar(x-w, va, w, label="A healthy", color="#1f9e86")
+ax.bar(x,   vb, w, label="B recursive", color="#d64a3d")
+ax.bar(x+w, vc, w, label="C recursive, relabelled", color="#e0913f")
+ax.axhline(SDIR_TRIGGER, ls="--", lw=1, color="#444", label=f"trigger={SDIR_TRIGGER}")
+ax.set_ylim(0,1.15); ax.set_ylabel("signal / score [0,1]")
+ax.set_title("HAS-Core :: SDIR v1.1 — drift from baseline\n"
+             "relabelling provenance no longer hides recursive drift", fontsize=12, pad=12)
+ax.set_xticks(x); ax.set_xticklabels(labels); ax.legend(frameon=False, fontsize=8.5)
+fig.tight_layout(); fig.savefig("sdir_demo.png", dpi=150)
 print("\nFigure written to sdir_demo.png")

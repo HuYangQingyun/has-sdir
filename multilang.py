@@ -1,19 +1,17 @@
 """
 HAS-Core :: SDIR multilingual tokenizer
 
-Extends SDIR beyond English. Supported: English, Chinese, French, Spanish,
-German. The language is detected automatically; Chinese is segmented with
-jieba, Latin-script languages split on whitespace. Each language has its own
-stop-word list so common function words do not distort the signals.
+Turns text in several languages into a comparable token stream. Supported:
+English, Chinese, French, Spanish, German. Language is detected automatically;
+Chinese is segmented with jieba, Latin-script languages split on whitespace.
+Each language has its own stop-word list so common function words do not distort
+the read-out.
 
-This is an interface layer only. It does not touch the core detection logic
-(region-split, baseline lock). It just turns text in several languages into a
-comparable token stream, so the same structural read-out applies across them.
+This is an interface layer only.
 """
 from __future__ import annotations
 import re
 
-# minimal stop-word lists per language (function words that carry little signal)
 _STOP = {
     "en": {"the","a","an","and","or","of","to","in","is","it","that","this",
            "for","on","with","as","are","was","be","by","at","from"},
@@ -33,12 +31,10 @@ _LATIN = {"en", "fr", "es", "de"}
 def detect_language(text: str) -> str:
     """Lightweight language detection. Chinese by character range; among Latin
     scripts, by characteristic stop-words. Defaults to English."""
-    # Chinese: any CJK characters
     if re.search(r"[\u4e00-\u9fff]", text):
         return "zh"
     low = text.lower()
     words = set(re.findall(r"[a-zàâçéèêëîïôûùüÿñæœ]+", low))
-    # score each Latin language by stop-word overlap
     best, best_score = "en", 0
     for lang in ("fr", "es", "de", "en"):
         score = len(words & _STOP[lang])
@@ -56,7 +52,6 @@ def tokenize(text: str, lang: str = None) -> list:
         toks = [t.strip() for t in jieba.cut(text) if t.strip()]
         toks = [t for t in toks if t not in _STOP["zh"] and not re.match(r"^\W+$", t)]
         return toks
-    # Latin scripts
     low = text.lower()
     toks = re.findall(r"[a-zàâçéèêëîïôûùüÿñæœ]+", low)
     stop = _STOP.get(lang, _STOP["en"])
@@ -64,11 +59,10 @@ def tokenize(text: str, lang: str = None) -> list:
 
 
 def tokenize_batch(texts: list) -> tuple:
-    """Tokenize a batch, detecting the dominant language of the batch so all
-    documents are treated consistently. Returns (list_of_token_lists, lang)."""
+    """Tokenize a batch, detecting its dominant language so all documents are
+    treated consistently. Returns (list_of_token_lists, lang)."""
     if not texts:
         return [], "en"
-    # detect dominant language from a sample
     sample = " ".join(texts[:20])
     lang = detect_language(sample)
     return [tokenize(t, lang) for t in texts], lang

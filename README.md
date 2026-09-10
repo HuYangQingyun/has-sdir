@@ -1,43 +1,83 @@
-# HAS-Core :: SDIR v2.0
+# HAS-Core :: SDIR
 
-**SDIR — Synthetic Data Inbreeding Rate.** A read-only, formative-layer
-diagnostic for the integrity of training data. It examines a batch *before* a
-model trains on it, and reports the degree to which the batch shows signs of
-synthetic-data contamination consistent with recursive ("inbreeding") reuse.
+**SDIR — Synthetic Data Inbreeding Rate.** A read-only, lightweight diagnostic
+for the integrity of AI data. It examines a batch of documents and reports the
+degree to which the batch shows signs of synthetic-data contamination consistent
+with recursive ("inbreeding") reuse.
 
 **License:** Non-Commercial Research only. Free for research and study.
 Commercial use requires prior written permission — see `LICENSE`.
 
 ---
 
-## Scope & status (please read first)
+## Where it applies (please read first)
 
-SDIR is a **lightweight, public demonstration build**. Its purpose is to make a
-direction visible and runnable: that the integrity of training data can be
-examined at the **formative layer**, before a model trains on it.
+SDIR is a data-integrity read-out for use **across the full AI lifecycle** — not
+only at the point of training. Wherever AI data flows, it can be read for signs
+of synthetic contamination:
+
+- in **live and deployed systems**, where models are continuously fed,
+  retrieved-against, and re-grounded on data of mixed and often unknown
+  provenance — the setting where contamination does the most quiet damage, and
+  where SDIR is most useful in practice;
+- in **evaluation and monitoring**, as an integrity read-out on the data a
+  system is being judged on or is judging with;
+- and, upstream, on **data before it enters training**.
+
+Contamination is not a one-time gate at training; it recurs wherever AI data is
+reused. In real deployments the downstream stages matter most — a compromised
+data stream in a running system is harder to see, and costlier to ignore, than
+one caught on a bench.
+
+---
+
+## This repository (public demonstration build)
+
+This repository is a **public demonstration and test harness**. Its purpose is
+to make the direction visible and runnable, so the effect can be seen:
 
 - It is **read-only** — it reports evidence, it does not decide. A diagnosis is
   evidence; a separate policy layer decides.
-- It is a **demonstration**, not a production detector. The core of the method
-  in this public build is intentionally minimal — enough to show the effect,
-  not the full implementation.
-- A robust, engineering-grade implementation for a specific setting is a
-  separate undertaking, referred to below as the **Engineering Edition**,
-  offered through collaboration or commercial licensing.
+- It is **multilingual** — automatic language detection across English, Chinese,
+  French, Spanish and German.
+- Its behaviour is **deterministic** and **honest under edge conditions** (see
+  below).
+
+The **detection core is not part of this public build.** This repository
+demonstrates the effect; the working method is not included here.
+
+---
+
+## The engineering edition (3.0) — not published
+
+A separate, engineering-grade edition — internally at **3.0** — reaches
+materially higher performance on real-world data: **AUC ≈ 0.90**, using
+lightweight statistics (no GPU, no model). **This edition is not published.**
+
+It is complete and available only through **direct collaboration or commercial
+licensing**. This public build shows the direction and the level reached; the
+engineering edition is the production instrument.
+
+**We are actively seeking capable, well-resourced partners** — institutions and
+individuals with the strength, the resources, and a track record to build at
+scale — to test and validate, to deploy the engineering edition, and to pursue
+joint reporting and enterprise development. This is an open invitation, and we
+welcome conversations to explore it.
 
 ---
 
 ## The problem it addresses
 
-Modern AI training increasingly reuses AI-generated data. Training successive
-models on synthetic data drives recursive degradation — the output distribution
-narrows and diversity collapses ("model collapse"). Once training data is
-contaminated at the source, everything downstream — evaluation, alignment,
-deployment — is built on a compromised foundation.
+Modern AI increasingly reuses AI-generated data. Training and re-grounding
+successive systems on synthetic data drives recursive degradation — the output
+distribution narrows and diversity collapses ("model collapse"). And it does not
+end at training: deployed systems ingest, retrieve, and recycle data of unknown
+origin continuously, so contamination re-enters downstream, where it is hardest
+to see.
 
-SDIR sits at this upstream point: a provenance-integrity read-out on the data
-**before** it ever enters training. It complements existing model-evaluation
-work and sits upstream of it — alongside, not instead of, that work.
+SDIR gives a provenance-integrity read-out on the data itself — wherever that
+data sits in the lifecycle. It complements model-evaluation work and sits
+alongside it, not instead of it.
 
 ---
 
@@ -49,9 +89,6 @@ Given a batch of documents, SDIR returns:
 - a **graded status** — `CLEAR` / `MONITOR` / `REVIEW` / `SEVERE-DRIFT`,
 - and separate **observation states** for cases where a clean reading cannot be
   given (see "Honest behaviour" below).
-
-It is **multilingual**, with automatic language detection across English,
-Chinese, French, Spanish and German.
 
 ---
 
@@ -79,31 +116,14 @@ The read-out is built not to overclaim:
 - **Unknown provenance** is reported as its own state and does not by itself
   raise the contamination score — unknown is not treated as dangerous.
 - Behaviour is **deterministic** — the same input gives the same read-out.
-- A **BaselineLock** is provided as a tamper-lock: where a reference set is used
-  in a pipeline, it cannot be silently swapped or loosened without an
-  operator-supplied secret.
-
----
-
-## The Engineering Edition (collaboration / commercial)
-
-This public build shows the direction. A robust, engineering-grade
-implementation — stable across a wider range of conditions, resilient to
-harder cases, and able to scale to large, high-throughput settings — is a
-heavier undertaking. It is offered through **direct collaboration and
-commercial licensing**.
-
-**We are actively seeking capable, well-resourced partners** — institutions and
-individuals with the strength, the resources, and a track record to build at
-scale — to take this further: to test and validate, to build the Engineering
-Edition together, and to pursue joint reporting and enterprise development.
-This is an open invitation, and we welcome conversations to explore it.
+- A **BaselineLock** is provided as a tamper-lock: a reference set cannot be
+  silently swapped or loosened without an operator-supplied secret.
 
 ---
 
 ## Files
 
-- `has_sdir.py` — the v2.0 read-out (public demonstration build)
+- `has_sdir.py` — the public demonstration read-out
 - `multilang.py` — multilingual tokenization (en, zh, fr, es, de)
 - `demo.py` — runnable demonstration
 - `LICENSE` — non-commercial research license

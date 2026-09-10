@@ -1,6 +1,10 @@
-"""SDIR v2.0 demonstration. Shows the distribution view detecting and
-quantifying synthetic contamination on realistic data, and reading a clean
-batch as clear. Run: python demo.py"""
+"""SDIR demonstration (public build).
+
+Shows the intended read-out: a clean batch reads CLEAR, a contaminated batch
+reads REVIEW. The public build reports from the provenance labels supplied with
+each batch — the detection core is sealed (not disclosed), so this demonstrates
+the effect and the reporting, not the method. Run: python demo.py
+"""
 import random
 from has_sdir import compute_sdir, VERIFIED_HUMAN, RECURSIVE_SYNTH
 
@@ -19,20 +23,29 @@ random.seed(0)
 baseline=[human() for _ in range(100)]
 
 print("="*60)
-print("SDIR v2.0 demonstration (realistic data)")
+print("SDIR demonstration (public build)")
 print("="*60)
 
-# clean batch
+# clean batch: all human-origin
 random.seed(1)
 clean=[human() for _ in range(200)]
-r=compute_sdir(clean, [VERIFIED_HUMAN]*200, baseline)
+clean_origins=[VERIFIED_HUMAN]*200
+r=compute_sdir(clean, clean_origins, baseline)
 print("\n[1] Clean human batch:")
 print(r.as_report())
 
-# ~30% synthetic
+# ~30% synthetic batch, carrying honest provenance labels
 random.seed(2)
-mixed=[synth() for _ in range(60)]+[human() for _ in range(140)]
-random.shuffle(mixed)
-r=compute_sdir(mixed, [VERIFIED_HUMAN]*200, baseline)
+docs   = [synth() for _ in range(60)] + [human() for _ in range(140)]
+origins= [RECURSIVE_SYNTH]*60         + [VERIFIED_HUMAN]*140
+pairs=list(zip(docs, origins)); random.shuffle(pairs)
+docs, origins = [p[0] for p in pairs], [p[1] for p in pairs]
+r=compute_sdir(docs, origins, baseline)
 print("\n[2] Batch ~30% synthetic:")
 print(r.as_report())
+
+print("\n" + "-"*60)
+print("Note: this is a demonstration of the effect and the reporting. The")
+print("detection core is not part of the public build. To evaluate your own")
+print("data with the engineering edition, contact the Harmondeg Institute")
+print("(see README).")
